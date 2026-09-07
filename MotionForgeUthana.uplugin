@@ -1,0 +1,35 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "MotionForge Uthana",
+  "Description": "Adds Uthana to MotionForge as a text-to-motion provider: hosted generation on your own account, async jobs, and per-character retargeting on the service side. Add-on only: removing it changes nothing about MotionForge.",
+  "Category": "Automation Forge",
+  "CreatedBy": "Bojan Andrejek",
+  "CreatedByURL": "https://kovati.dev",
+  "DocsURL": "https://github.com/AutomationForgeHQ/MotionForgeUthana",
+  "MarketplaceURL": "",
+  "SupportURL": "https://github.com/AutomationForgeHQ/MotionForgeUthana/issues",
+  "EditorOnly": true,
+  "CanContainContent": false,
+  "IsBetaVersion": false,
+  "IsExperimentalVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "MotionForgeUthana",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit",
+      "TargetAllowList": [
+        "Editor"
+      ]
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "MotionForge",
+      "Enabled": true,
+      "Comment": "The pipeline this registers a provider with. Nothing here works without it."
+    }
+  ]
+}
