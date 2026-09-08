@@ -1,6 +1,6 @@
 # MotionForge Uthana
 
-Adds Uthana to [MotionForge](../MotionForge/README.md) as a text-to-motion provider. Add-on only:
+Adds Uthana to [MotionForge](https://github.com/AutomationForgeHQ/MotionForge) as a text-to-motion provider. Add-on only:
 removing it changes nothing about MotionForge except which providers are registered.
 
 Until 2026-09-01 this code was a folder inside the MotionForge core, and the core's settings
@@ -44,6 +44,6 @@ three address the same vault row.
 
 ## Related
 
-- **[MotionForge](../MotionForge/README.md)** — the pipeline this registers with: definitions,
+- **[MotionForge](https://github.com/AutomationForgeHQ/MotionForge)** — the pipeline this registers with: definitions,
   takes, retargeting, provenance.
-- **[MotionForgeKimodo](../MotionForgeKimodo/README.md)** — the free local provider, one shape over.
+- **[MotionForgeKimodo](https://kovati.dev/plugins/motionforge/)** — the free local provider, one shape over.
