@@ -21,6 +21,11 @@ public class MotionForgeUthana : ModuleRules
 			new string[]
 			{
 				"Json",
+				"DeveloperSettings", // the plan and price page
+				"AssetRegistry",     // counting uploaded characters without loading them
+				"Slate",             // opening the Keys page from a setup step
+				"SlateCore",
+				"Settings",          // opening this plugin's own settings page
 			}
 			);
 	}

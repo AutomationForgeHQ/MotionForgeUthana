@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
-  "Version": 1,
-  "VersionName": "0.1.1",
+  "Version": 2,
+  "VersionName": "0.2.0",
   "FriendlyName": "MotionForge Uthana",
   "Description": "Adds Uthana to MotionForge as a text-to-motion provider: hosted generation on your own account, async jobs, and per-character retargeting on the service side. Add-on only: removing it changes nothing about MotionForge.",
   "Category": "Automation Forge",

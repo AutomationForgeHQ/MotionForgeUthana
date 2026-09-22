@@ -42,6 +42,22 @@ after it.
 Set it in **Tools ▸ Automation Forge ▸ Keys**, the hub, or MotionForge's own settings page - all
 three address the same vault row.
 
+## Billing, and its settings
+
+**Project Settings ▸ Automation Forge ▸ MotionForge Uthana** holds your plan - pay as you go or
+subscription - its rates and the currency, and every price in the editor is read from it.
+
+- **Pay as you go:** each take bills its seconds when it is submitted, kept or not; fetching a take
+  to watch it is free. The rate starts at Uthana's published price, 0.10 USD a generated second, and
+  every cost line says it is that price until you enter your own.
+- **Subscription:** generating is free; importing a take uses its seconds of your download quota.
+
+The plan and rates were carried over from MotionForge's old billing settings. An old rate of zero,
+which meant "show seconds only", starts at the published price instead.
+
+Each definition also carries Uthana's own settings - the model and prompt rewriting - and switching
+a definition to another provider and back keeps them.
+
 ## Related
 
 - **[MotionForge](https://github.com/AutomationForgeHQ/MotionForge)** — the pipeline this registers with: definitions,

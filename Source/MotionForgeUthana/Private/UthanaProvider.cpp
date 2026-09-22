@@ -1,6 +1,14 @@
 #include "UthanaProvider.h"
 
 #include "MotionForgeUthana.h"
+#include "UthanaPipeline.h"
+#include "UthanaSettings.h"
+#include "MotionCharacter.h"
+#include "MotionForgeSubsystem.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Framework/Docking/TabManager.h"
+#include "ISettingsModule.h"
+#include "Modules/ModuleManager.h"
 
 #include "MotionForge.h"
 #include "MotionCredentialStore.h"
@@ -16,6 +24,13 @@
 #include "HAL/FileManager.h"
 
 const FName FUthanaProvider::ProviderId = TEXT("Uthana");
+
+/** A rate as people read one: "$0.10", "EUR 0.10". The same form the core's cost lines use. */
+static FString UthanaMoney(double Amount, const FString& Currency)
+{
+	const FString Number = FString::Printf(TEXT("%.2f"), Amount);
+	return Currency == TEXT("USD") ? TEXT("$") + Number : Currency + TEXT(" ") + Number;
+}
 
 namespace UthanaApi
 {
@@ -139,7 +154,7 @@ FMotionProviderCaps FUthanaProvider::GetCaps() const
 
 	if (!HasCredential())
 	{
-		Caps.SetupHint = TEXT("Paste an API key into Project Settings > Plugins > MotionForge.");
+		Caps.SetupHint = TEXT("Uthana needs an API key. Add it on the Keys page.");
 	}
 
 	return Caps;
@@ -269,7 +284,7 @@ void FUthanaProvider::SubmitJob(const FMotionSubmitRequest& Request, FOnMotionSu
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Http = MakeGraphQLRequest(UthanaApi::SubmitMutation, Variables);
 	if (!Http.IsValid())
 	{
-		Failure.Error = TEXT("No Uthana API key configured. Set one in Project Settings > Plugins > MotionForge.");
+		Failure.Error = TEXT("No Uthana API key is stored. Add it on the Keys page, or in Editor Preferences.");
 		OnComplete(Failure);
 		return;
 	}
@@ -870,4 +885,301 @@ void FUthanaProvider::ListCharacters(FOnMotionCharactersListed OnComplete)
 		});
 
 	Http->ProcessRequest();
+}
+
+// -------------------------------------------------------------------------------------------------
+// What Uthana declares
+// -------------------------------------------------------------------------------------------------
+
+UClass* FUthanaProvider::GetPipelineClass() const
+{
+	return UUthanaPipeline::StaticClass();
+}
+
+TArray<FMotionModelInfo> FUthanaProvider::GetModels() const
+{
+	FMotionModelInfo Model;
+	Model.Id = TEXT("text-to-motion-3.0");
+	Model.Description = TEXT("4 to 10 seconds, good hands, no seed.");
+	Model.MinSeconds = 4.f;
+	Model.MaxSeconds = 10.f;
+	Model.bDefault = true;
+	return { Model };
+}
+
+FMotionBilling FUthanaProvider::GetBilling() const
+{
+	const UUthanaSettings* Settings = UUthanaSettings::Get();
+
+	FMotionBilling Billing;
+	Billing.Currency = Settings->Currency;
+
+	if (Settings->Plan == EUthanaPlan::PayAsYouGo)
+	{
+		// Bills the requested seconds per take when it is submitted. Fetching the same take again was
+		// measured free, eight times in one session, so watching before choosing costs nothing.
+		Billing.Unit = EMotionBillingUnit::PerGeneratedSecond;
+		Billing.Rate = Settings->RatePerGeneratedSecond;
+		Billing.PlanName = TEXT("pay as you go");
+		Billing.bFetchIsFree = true;
+		Billing.RateNote = Settings->IsPublishedRate()
+			? TEXT("Uthana's published price; set your own on the MotionForge Uthana settings page")
+			: FString();
+		Billing.Summary = FString::Printf(TEXT("pay as you go, %s a generated second%s"),
+			*UthanaMoney(Settings->RatePerGeneratedSecond, Settings->Currency),
+			Settings->IsPublishedRate() ? TEXT(", Uthana's published price") : TEXT(""));
+	}
+	else
+	{
+		Billing.Unit = EMotionBillingUnit::PerDownloadedSecond;
+		Billing.Rate = Settings->RatePerDownloadedSecond;
+		Billing.PlanName = TEXT("subscription");
+		Billing.bFetchIsFree = false;
+		Billing.Summary = TEXT("subscription: generating is free, downloads use your quota");
+	}
+
+	return Billing;
+}
+
+FText FUthanaProvider::GetTagline() const
+{
+	return NSLOCTEXT("MotionForgeUthana", "Tagline",
+		"Uthana, hosted. Paid per generated second on pay as you go. Generates on your own uploaded "
+		"character, with good hands; 4 to 10 seconds a take.");
+}
+
+FString FUthanaProvider::DescribeCharacterRoute(const UMotionCharacter* Character) const
+{
+	if (Character == nullptr)
+	{
+		return FString();
+	}
+
+	const FString Uploaded = Character->ProviderCharacterId.IsEmpty()
+		? FString(TEXT("not uploaded yet"))
+		: FString::Printf(TEXT("uploaded as %s"), *Character->ProviderCharacterId.Left(8));
+
+	if (Character->ProviderMesh.IsNull())
+	{
+		return FString::Printf(TEXT("generated on your character (%s), imported onto %s"), *Uploaded,
+			*Character->TargetSkeleton.ToSoftObjectPath().GetAssetName());
+	}
+
+	// A route is what happens, not what was meant to: with no retargeter the clip stops on Uthana's rig.
+	return Character->Retargeter.IsNull()
+		? FString::Printf(TEXT("generated on your character (%s) and stopped on %s - no retargeter moves them onto %s"), *Uploaded,
+			*Character->ProviderMesh.ToSoftObjectPath().GetAssetName(), *Character->PreviewMesh.ToSoftObjectPath().GetAssetName())
+		: FString::Printf(TEXT("generated on your character (%s), retargeted onto %s"), *Uploaded,
+			*Character->PreviewMesh.ToSoftObjectPath().GetAssetName());
+}
+
+void FUthanaProvider::GetCharacterSetupActions(UMotionCharacter* Character, TArray<FMotionCharacterSetupAction>& OutActions)
+{
+	if (Character == nullptr)
+	{
+		return;
+	}
+
+	const FString Path = Character->GetPathName();
+	const bool bUploaded = !Character->ProviderCharacterId.IsEmpty();
+
+	FMotionCharacterSetupAction Upload;
+	Upload.Label = bUploaded
+		? NSLOCTEXT("MotionForgeUthana", "UploadAgain", "Upload again")
+		: NSLOCTEXT("MotionForgeUthana", "Upload", "Upload to Uthana");
+	Upload.Tooltip = NSLOCTEXT("MotionForgeUthana", "UploadTip",
+		"Exports the Preview Mesh and uploads it, so Uthana generates on your own rig and clips need no "
+		"retargeting. Free. Takes up to a few minutes. Uploading again creates a second character on "
+		"Uthana; takes made for the first stay tied to it.");
+	Upload.bDone = bUploaded;
+	Upload.bRequired = true;
+	Upload.Status = bUploaded
+		? FText::Format(NSLOCTEXT("MotionForgeUthana", "UploadedFmt", "Uploaded, id {0}."), FText::FromString(Character->ProviderCharacterId))
+		: NSLOCTEXT("MotionForgeUthana", "NotUploaded", "Not uploaded. Uthana needs it before it can generate.");
+	Upload.Confirmation = bUploaded
+		? NSLOCTEXT("MotionForgeUthana", "UploadAgainConfirm",
+			"This character is already on Uthana. Uploading again creates a second one there, and takes "
+			"made for the first stay tied to it. Upload again?")
+		: FText::GetEmpty();
+
+	Upload.Options = MakeShared<FStructOnScope>(FMotionCharacterUploadOptions::StaticStruct());
+
+	TSharedPtr<FStructOnScope> Options = Upload.Options;
+	Upload.Run = [Path, bUploaded, Options](TFunction<void(bool, const FString&)> Done)
+	{
+		UMotionForgeSubsystem* Forge = UMotionForgeSubsystem::Get();
+		if (!Forge)
+		{
+			Done(false, TEXT("MotionForge is not available."));
+			return;
+		}
+
+		const FMotionCharacterUploadOptions& Chosen = *reinterpret_cast<const FMotionCharacterUploadOptions*>(Options->GetStructMemory());
+
+		Forge->UploadCharacter(Path, Chosen, /*bForce*/ bUploaded,
+			[Done](bool bOk, const FMotionCharacterUpload& Result, const FString& Error)
+			{
+				if (!bOk)
+				{
+					Done(false, Error);
+					return;
+				}
+
+				Done(true, Result.AutoRigConfidence > 0.f
+					? FString::Printf(TEXT("Uploaded as %s. Uthana re-rigged it (confidence %.2f), so motion comes back on its guessed skeleton."),
+						*Result.ProviderCharacterId, Result.AutoRigConfidence)
+					: FString::Printf(TEXT("Uploaded as %s. Uthana kept your rig."), *Result.ProviderCharacterId));
+			});
+	};
+	OutActions.Add(MoveTemp(Upload));
+
+	if (bUploaded)
+	{
+		FMotionCharacterSetupAction Rig;
+		Rig.Label = NSLOCTEXT("MotionForgeUthana", "ImportRig", "Import Uthana's rig");
+		Rig.Tooltip = NSLOCTEXT("MotionForgeUthana", "ImportRigTip",
+			"Optional. Fetches the character back as Uthana stores it, for retargeting through an IK "
+			"Retargeter. Only needed when clips must land on a rig other than the one you uploaded. Free.");
+		Rig.bDone = !Character->ProviderMesh.IsNull();
+		Rig.Status = Rig.bDone
+			? FText::Format(NSLOCTEXT("MotionForgeUthana", "RigDoneFmt", "Imported as {0}."), FText::FromString(Character->ProviderMesh.ToSoftObjectPath().GetAssetName()))
+			: NSLOCTEXT("MotionForgeUthana", "RigNone", "Not imported. Clips import straight onto your skeleton, which is right for a character you uploaded.");
+		Rig.Run = [Path](TFunction<void(bool, const FString&)> Done)
+		{
+			if (UMotionForgeSubsystem* Forge = UMotionForgeSubsystem::Get())
+			{
+				Forge->ImportProviderCharacter(Path, [Done](bool bOk, const FString& MeshPath, const FString& Error)
+				{
+					Done(bOk, bOk
+						? FString::Printf(TEXT("Imported %s. Set a Retargeter from it to the Preview Mesh to retarget through it."), *MeshPath)
+						: Error);
+				});
+			}
+		};
+		OutActions.Add(MoveTemp(Rig));
+	}
+}
+
+void FUthanaProvider::GetSetupSteps(TArray<FMotionSetupStep>& OutSteps) const
+{
+	const UUthanaSettings* Settings = UUthanaSettings::Get();
+
+	auto OpenKeys = []()
+	{
+		if (FGlobalTabmanager::Get()->HasTabSpawner(FName("ForgeKeys")))
+		{
+			FGlobalTabmanager::Get()->TryInvokeTab(FName("ForgeKeys"));
+		}
+		else if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
+		{
+			SettingsModule->ShowViewer("Editor", "Automation Forge", "MotionForgeEditorSettings");
+		}
+	};
+
+	FMotionSetupStep& Key = OutSteps.AddDefaulted_GetRef();
+	Key.Label = NSLOCTEXT("MotionForgeUthana", "StepKey", "Uthana API key");
+	Key.State = HasCredential() ? EMotionSetupState::Done : EMotionSetupState::Todo;
+	Key.Detail = HasCredential()
+		? NSLOCTEXT("MotionForgeUthana", "StepKeyOk", "Stored in the system credential vault.")
+		: NSLOCTEXT("MotionForgeUthana", "StepKeyMissing", "Needed for everything. Create one in your Uthana account.");
+	Key.ActionLabel = HasCredential()
+		? NSLOCTEXT("MotionForgeUthana", "StepKeyReplace", "Replace")
+		: NSLOCTEXT("MotionForgeUthana", "StepKeyAdd", "Add key");
+	Key.Action = OpenKeys;
+	Key.HelpUrl = TEXT("https://uthana.com/docs/api/");
+	Key.HelpLabel = NSLOCTEXT("MotionForgeUthana", "StepKeyHelp", "Uthana API docs");
+
+	FMotionSetupStep& Plan = OutSteps.AddDefaulted_GetRef();
+	Plan.Label = NSLOCTEXT("MotionForgeUthana", "StepPlan", "Your plan");
+	Plan.State = EMotionSetupState::Done;
+	Plan.Detail = Settings->Plan == EUthanaPlan::PayAsYouGo
+		? (Settings->IsPublishedRate()
+			? FText::Format(NSLOCTEXT("MotionForgeUthana", "StepPlanPaygPublishedFmt",
+				"Pay as you go at {0} a generated second, Uthana's published price: every take bills when submitted, kept or not. If your account has a different rate, or is a subscription, change it here so prices are right."),
+				FText::FromString(UthanaMoney(Settings->RatePerGeneratedSecond, Settings->Currency)))
+			: FText::Format(NSLOCTEXT("MotionForgeUthana", "StepPlanPaygFmt",
+				"Pay as you go at {0} a generated second: every take bills when submitted, kept or not. If your account is a subscription, change it here so prices are right."),
+				FText::FromString(UthanaMoney(Settings->RatePerGeneratedSecond, Settings->Currency))))
+		: NSLOCTEXT("MotionForgeUthana", "StepPlanSub",
+			"Subscription: generating is free and importing uses quota. If your account is pay as you go, change it here so prices are right.");
+	Plan.ActionLabel = NSLOCTEXT("MotionForgeUthana", "StepPlanChange", "Change plan");
+	Plan.Action = []()
+	{
+		if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
+		{
+			SettingsModule->ShowViewer("Project", "Automation Forge", "UthanaSettings");
+		}
+	};
+
+	// A character uploaded to Uthana, read from the registry tags. It used to count only characters
+	// that happened to be loaded, so the number - and every page drawing it - changed whenever one
+	// was loaded or collected. A character saved before the tags existed is loaded to ask instead.
+	int32 Uploaded = 0;
+	{
+		const FAssetRegistryModule& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		TArray<FAssetData> Assets;
+		Registry.Get().GetAssetsByClass(UMotionCharacter::StaticClass()->GetClassPathName(), Assets, true);
+
+		for (const FAssetData& Asset : Assets)
+		{
+			FString CharacterId;
+			FString CharacterProvider;
+
+			if (Asset.GetTagValue(GET_MEMBER_NAME_CHECKED(UMotionCharacter, ProviderCharacterId), CharacterId))
+			{
+				Asset.GetTagValue(GET_MEMBER_NAME_CHECKED(UMotionCharacter, ProviderId), CharacterProvider);
+			}
+			else if (const UMotionCharacter* Character = Cast<UMotionCharacter>(Asset.GetAsset()))
+			{
+				CharacterId = Character->ProviderCharacterId;
+				CharacterProvider = Character->ProviderId.ToString();
+			}
+
+			const bool bForUthana = CharacterProvider.IsEmpty() || CharacterProvider == TEXT("None")
+				|| FName(*CharacterProvider) == ProviderId;
+
+			if (!CharacterId.IsEmpty() && bForUthana)
+			{
+				++Uploaded;
+			}
+		}
+	}
+
+	FMotionSetupStep& Character = OutSteps.AddDefaulted_GetRef();
+	Character.Label = NSLOCTEXT("MotionForgeUthana", "StepCharacter", "A character on Uthana");
+	Character.State = Uploaded > 0 ? EMotionSetupState::Done : EMotionSetupState::Todo;
+	Character.Detail = Uploaded > 0
+		? FText::Format(NSLOCTEXT("MotionForgeUthana", "StepCharacterOkFmt", "{0} uploaded character(s) in this project."), FText::AsNumber(Uploaded))
+		: NSLOCTEXT("MotionForgeUthana", "StepCharacterTodo", "Uthana generates on a character you upload. Create a Motion Character and press Upload to Uthana on it. Free.");
+
+	FMotionSetupStep& Test = OutSteps.AddDefaulted_GetRef();
+	Test.Label = NSLOCTEXT("MotionForgeUthana", "StepTest", "Connection");
+	if (!LastConnectionOk.IsSet())
+	{
+		Test.State = HasCredential() ? EMotionSetupState::Unknown : EMotionSetupState::Blocked;
+		Test.Detail = NSLOCTEXT("MotionForgeUthana", "StepTestUnknown", "Not tested yet. Testing is free.");
+	}
+	else
+	{
+		Test.State = LastConnectionOk.GetValue() ? EMotionSetupState::Done : EMotionSetupState::Todo;
+		Test.Detail = FText::FromString(LastConnectionMessage);
+	}
+
+	if (HasCredential())
+	{
+		Test.ActionLabel = NSLOCTEXT("MotionForgeUthana", "StepTestRun", "Test connection");
+		Test.Action = [this]()
+		{
+			const_cast<FUthanaProvider*>(this)->TestConnection([this](bool bOk, const FString& Message)
+			{
+				LastConnectionOk = bOk;
+				LastConnectionMessage = bOk ? FString(TEXT("Uthana answered with this key.")) : Message;
+
+				if (UMotionForgeSubsystem* Forge = UMotionForgeSubsystem::Get())
+				{
+					Forge->NotifyProviderStateChanged(ProviderId);
+				}
+			});
+		};
+	}
 }

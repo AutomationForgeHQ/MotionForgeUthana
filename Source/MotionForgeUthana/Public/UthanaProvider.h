@@ -51,6 +51,15 @@ public:
 		FOnMotionDownloadComplete OnComplete) override;
 	virtual void TestConnection(FOnMotionTestComplete OnComplete) override;
 
+	// What this provider declares, so the core draws it without knowing it.
+	virtual UClass* GetPipelineClass() const override;
+	virtual TArray<FMotionModelInfo> GetModels() const override;
+	virtual FMotionBilling GetBilling() const override;
+	virtual FText GetTagline() const override;
+	virtual FString DescribeCharacterRoute(const UMotionCharacter* Character) const override;
+	virtual void GetCharacterSetupActions(UMotionCharacter* Character, TArray<FMotionCharacterSetupAction>& OutActions) override;
+	virtual void GetSetupSteps(TArray<FMotionSetupStep>& OutSteps) const override;
+
 	virtual bool SupportsCharacterManagement() const override { return true; }
 	virtual void UploadCharacter(
 		const FString& AbsoluteFilePath,
@@ -80,4 +89,8 @@ private:
 	 * looks successful at the transport layer still has to be inspected.
 	 */
 	static bool ExtractGraphQLError(const TSharedPtr<class FJsonObject>& Root, FString& OutError);
+
+	/** The last connection test, for the setup page. */
+	mutable TOptional<bool> LastConnectionOk;
+	mutable FString LastConnectionMessage;
 };
