@@ -8,6 +8,18 @@ not for the commit log.
 Headings are `## <x.y.z> — <date>`. Use `Added` / `Changed` / `Fixed` / `Compatibility` /
 `Known issues`, only the ones that apply.
 
+## 0.2.1 — 2026-10-04
+
+### Fixed
+- Moving billing settings over from MotionForge's old page no longer puts the old currency on Uthana's
+  published price. A project whose old rate was zero, in a currency other than USD, was shown 0.10 of
+  that currency a second - nobody's price, and without the note that marks the published one. The
+  currency now moves only with a rate. A project already moved by 0.2.0 keeps what it was given, so
+  check the rate and currency on Project Settings ▸ Automation Forge ▸ MotionForge Uthana.
+
+### Changed
+- Copyright and licence notices now name Bojan Andrejek / MetaWorx LLC. It is still Apache 2.0, and nothing about how you may use it changed.
+
 ## 0.2.0 — 2026-09-22
 
 ### Added

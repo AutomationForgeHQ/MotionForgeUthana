@@ -38,21 +38,29 @@ namespace UthanaMigration
 		float Rate = 0.f;
 		const bool bHasRate = GConfig->GetFloat(OldSection, TEXT("RatePerBilledSecond"), Rate, GEditorIni);
 
+		// A currency belongs to the rate it priced, so it travels only with one. With no rate carried the
+		// published price stands, and that is a USD figure: carrying the old currency onto it printed
+		// "0.10 EUR a second", which is nobody's price, and without the published-price note.
 		FString Currency;
-		if (GConfig->GetString(OldSection, TEXT("Currency"), Currency, GEditorIni) && !Currency.IsEmpty())
-		{
-			Settings->Currency = Currency;
-		}
+		const bool bHasCurrency = GConfig->GetString(OldSection, TEXT("Currency"), Currency, GEditorIni) && !Currency.IsEmpty();
 
 		if (OldModel.Contains(TEXT("Downloaded")))
 		{
 			Settings->Plan = EUthanaPlan::Subscription;
-			if (bHasRate) { Settings->RatePerDownloadedSecond = Rate; }
+			if (bHasRate)
+			{
+				Settings->RatePerDownloadedSecond = Rate;
+				if (bHasCurrency) { Settings->Currency = Currency; }
+			}
 		}
 		else
 		{
 			Settings->Plan = EUthanaPlan::PayAsYouGo;
-			if (bHasRate && Rate > 0.f) { Settings->RatePerGeneratedSecond = Rate; }
+			if (bHasRate && Rate > 0.f)
+			{
+				Settings->RatePerGeneratedSecond = Rate;
+				if (bHasCurrency) { Settings->Currency = Currency; }
+			}
 		}
 
 		// A defaultconfig class writes to the project's Default ini through this, and SaveConfig would
